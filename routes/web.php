@@ -4,7 +4,7 @@ use App\Http\Controllers\ChatController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/login', [ChatController::class, 'showLogin'])->name('login');
-Route::post('/login', [ChatController::class, 'login'])->name('login.attempt');
+Route::post('/login', [ChatController::class, 'login'])->middleware('throttle:5,1')->name('login.attempt');
 Route::post('/logout', [ChatController::class, 'logout'])->name('logout');
 
 Route::middleware('auth')->group(function () {

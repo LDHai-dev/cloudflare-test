@@ -26,8 +26,9 @@ class SummarizeFile implements ShouldQueue
                 $summarizer->summarize($this->message);
             }
         } finally {
-            // luôn broadcast để client render lại (nút "Tóm tắt" reset nếu job lỗi)
-            broadcast(new ChatUpdated);
+            // luôn broadcast để client render lại (nút "Tóm tắt" reset nếu job lỗi);
+            // rescue: Reverb chết thì không được đánh fail job khi summary đã lưu
+            rescue(fn () => broadcast(new ChatUpdated));
         }
     }
 }

@@ -65,11 +65,19 @@ class FileSummarizer
     {
         $zip = new ZipArchive;
 
-        if ($zip->open($path) !== true || ($xml = $zip->getFromName('word/document.xml')) === false) {
+        if ($zip->open($path) !== true) {
             throw new RuntimeException('Không đọc được nội dung tệp docx.');
         }
 
-        $zip->close();
+        try {
+            $xml = $zip->getFromName('word/document.xml');
+        } finally {
+            $zip->close();
+        }
+
+        if ($xml === false) {
+            throw new RuntimeException('Không đọc được nội dung tệp docx.');
+        }
 
         return strip_tags(str_replace(['</w:p>', '<w:tab/>'], ["\n", "\t"], $xml));
     }

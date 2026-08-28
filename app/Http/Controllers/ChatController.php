@@ -90,6 +90,8 @@ class ChatController extends Controller
             // nhiều file thì đẩy queue — không thể bắt 1 request đợi N lần gọi AI
             if (config('services.ai.summarize_on_upload') && FileSummarizer::supports((string) $message->file_name)) {
                 if (count($files) === 1) {
+                    set_time_limit(180); // gọi AI sync có thể vượt max_execution_time mặc định của web server
+
                     try {
                         $summarizer->summarize($message);
                     } catch (Throwable $e) {
@@ -103,7 +105,8 @@ class ChatController extends Controller
             $messages[] = $message;
         }
 
-        broadcast(new ChatUpdated);
+        // tin đã lưu DB — Reverb chết thì không được làm hỏng response
+        rescue(fn () => broadcast(new ChatUpdated));
 
         return response()->json($messages, 201);
     }
@@ -157,8 +160,11 @@ class ChatController extends Controller
     {
         abort_unless((bool) $message->file_path, 404);
 
+        // ép tải về thay vì render trên domain R2 (chặn XSS nếu ai đó upload file HTML)
         return redirect()->away(
-            Storage::disk('r2')->temporaryUrl($message->file_path, now()->addMinutes(5))
+            Storage::disk('r2')->temporaryUrl($message->file_path, now()->addMinutes(5), [
+                'ResponseContentDisposition' => 'attachment; filename="'.str_replace(['"', "\r", "\n"], '', (string) $message->file_name).'"',
+            ])
         );
     }
 }
