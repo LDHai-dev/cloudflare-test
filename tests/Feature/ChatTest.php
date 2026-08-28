@@ -125,12 +125,34 @@ class ChatTest extends TestCase
         $this->assertSame('Tóm tắt giả lập', $second->fresh()->summary);
     }
 
+    public function test_summarize_image_sends_it_directly_to_vision_model(): void
+    {
+        Storage::fake('r2');
+        $this->fakeDeepSeek();
+        $user = User::factory()->create();
+
+        $message = Message::factory()->withFile('hoa-don.png')->create(['user_id' => $user->id]);
+        Storage::disk('r2')->put($message->file_path, 'fake-png-bytes');
+
+        $this->actingAs($user)
+            ->postJson("/messages/{$message->id}/summarize")
+            ->assertStatus(202);
+
+        $this->assertSame('Tóm tắt giả lập', $message->fresh()->summary);
+
+        // ảnh phải đi thẳng dạng base64 tới model vision, không qua bước trích text
+        Http::assertSent(function ($request) {
+            return $request['model'] === config('services.deepseek.vision_model')
+                && str_contains($request['messages'][0]['content'][1]['file_data'], base64_encode('fake-png-bytes'));
+        });
+    }
+
     public function test_unsupported_file_type_returns_error_on_summarize(): void
     {
         Storage::fake('r2');
         $user = User::factory()->create();
 
-        $message = Message::factory()->withFile('anh.png')->create(['user_id' => $user->id]);
+        $message = Message::factory()->withFile('nen.zip')->create(['user_id' => $user->id]);
         Storage::disk('r2')->put($message->file_path, 'khong-phai-van-ban');
 
         $this->actingAs($user)

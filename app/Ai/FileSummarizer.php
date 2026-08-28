@@ -12,21 +12,38 @@ class FileSummarizer
 {
     public const SUPPORTED_EXTENSIONS = ['pdf', 'docx', 'txt', 'md', 'csv', 'json', 'xml', 'html', 'log'];
 
+    public const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
     public function __construct(public AiProvider $aiProvider) {}
 
     public static function supports(string $fileName): bool
     {
-        return in_array(strtolower(pathinfo($fileName, PATHINFO_EXTENSION)), self::SUPPORTED_EXTENSIONS, true);
+        $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+
+        return in_array($extension, self::SUPPORTED_EXTENSIONS, true)
+            || in_array($extension, self::IMAGE_EXTENSIONS, true);
     }
 
     /**
-     * Download the message's file from R2 to a temp file, extract its text,
-     * summarize it via the configured AI provider, and persist the summary.
+     * Summarize the message's file via the configured AI provider and persist the summary.
+     * Images are sent directly to the provider; documents are downloaded from R2
+     * to a temp file and have their text extracted first.
      */
     public function summarize(Message $message): string
     {
         if (! self::supports((string) $message->file_name)) {
             throw new RuntimeException('Chưa hỗ trợ tóm tắt loại tệp này.');
+        }
+
+        $extension = strtolower(pathinfo((string) $message->file_name, PATHINFO_EXTENSION));
+
+        if (in_array($extension, self::IMAGE_EXTENSIONS, true)) {
+            $mimeType = $extension === 'jpg' ? 'image/jpeg' : 'image/'.$extension;
+            $summary = $this->aiProvider->summarizeImage(Storage::disk('r2')->get($message->file_path), $mimeType);
+
+            $message->update(['summary' => $summary]);
+
+            return $summary;
         }
 
         $tempPath = tempnam(sys_get_temp_dir(), 'sum');

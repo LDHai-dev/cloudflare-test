@@ -36,6 +36,7 @@ return [
     'deepseek' => [
         'key' => env('DEEPSEEK_API_KEY'),
         'model' => env('DEEPSEEK_MODEL', 'deepseek-chat'),
+        'vision_model' => env('DEEPSEEK_VISION_MODEL', 'deepseek-v4-flash-vision-exp'),
     ],
 
     'slack' => [
