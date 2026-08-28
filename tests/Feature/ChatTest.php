@@ -35,7 +35,7 @@ class ChatTest extends TestCase
         $this->actingAs($user)
             ->postJson('/messages', ['body' => 'Xin chào'])
             ->assertCreated()
-            ->assertJsonPath('body', 'Xin chào');
+            ->assertJsonPath('0.body', 'Xin chào');
 
         $this->assertDatabaseHas('messages', ['user_id' => $user->id, 'body' => 'Xin chào']);
     }
@@ -46,12 +46,12 @@ class ChatTest extends TestCase
         $user = User::factory()->create();
 
         $response = $this->actingAs($user)->post('/messages', [
-            'file' => UploadedFile::fake()->createWithContent('bao-cao.txt', 'Nội dung báo cáo quý ba.'),
+            'files' => [UploadedFile::fake()->createWithContent('bao-cao.txt', 'Nội dung báo cáo quý ba.')],
         ]);
 
         $response->assertCreated();
-        Storage::disk('r2')->assertExists($response->json('file_path'));
-        $this->assertNull($response->json('summary'));
+        Storage::disk('r2')->assertExists($response->json('0.file_path'));
+        $this->assertNull($response->json('0.summary'));
     }
 
     public function test_summarize_on_click_queues_job_that_saves_summary(): void
@@ -79,11 +79,50 @@ class ChatTest extends TestCase
         $user = User::factory()->create();
 
         $response = $this->actingAs($user)->post('/messages', [
-            'file' => UploadedFile::fake()->createWithContent('ghi-chu.md', 'Ghi chú cuộc họp.'),
+            'files' => [UploadedFile::fake()->createWithContent('ghi-chu.md', 'Ghi chú cuộc họp.')],
         ]);
 
         $response->assertCreated();
-        $this->assertSame('Tóm tắt giả lập', Message::find($response->json('id'))->summary);
+        $this->assertSame('Tóm tắt giả lập', Message::find($response->json('0.id'))->summary);
+    }
+
+    public function test_multiple_files_create_one_message_each(): void
+    {
+        Storage::fake('r2');
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->post('/messages', [
+            'body' => 'Gửi 2 tài liệu',
+            'files' => [
+                UploadedFile::fake()->createWithContent('a.txt', 'Nội dung A'),
+                UploadedFile::fake()->createWithContent('b.txt', 'Nội dung B'),
+            ],
+        ]);
+
+        $response->assertCreated();
+        $this->assertCount(3, $response->json()); // 1 tin nhắn text + 2 tin nhắn file
+        $this->assertSame(3, Message::count());
+    }
+
+    public function test_batch_summarize_queues_selected_old_files(): void
+    {
+        Storage::fake('r2');
+        $this->fakeDeepSeek();
+        $user = User::factory()->create();
+
+        $first = Message::factory()->withFile('a.txt')->create(['user_id' => $user->id]);
+        $second = Message::factory()->withFile('b.txt')->create(['user_id' => $user->id]);
+        Storage::disk('r2')->put($first->file_path, 'Nội dung A');
+        Storage::disk('r2')->put($second->file_path, 'Nội dung B');
+
+        // queue sync trong test nên job chạy ngay
+        $this->actingAs($user)
+            ->postJson('/messages/summarize-batch', ['ids' => [$first->id, $second->id]])
+            ->assertStatus(202)
+            ->assertJsonPath('queued', 2);
+
+        $this->assertSame('Tóm tắt giả lập', $first->fresh()->summary);
+        $this->assertSame('Tóm tắt giả lập', $second->fresh()->summary);
     }
 
     public function test_unsupported_file_type_returns_error_on_summarize(): void

@@ -11,6 +11,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/', [ChatController::class, 'index'])->name('chat');
     Route::get('/messages', [ChatController::class, 'fetch'])->name('messages.fetch');
     Route::post('/messages', [ChatController::class, 'store'])->name('messages.store');
+    Route::post('/messages/summarize-batch', [ChatController::class, 'summarizeBatch'])->name('messages.summarizeBatch');
     Route::post('/messages/{message}/summarize', [ChatController::class, 'summarize'])->name('messages.summarize');
     Route::get('/messages/{message}/download', [ChatController::class, 'download'])->name('messages.download');
 });

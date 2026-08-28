@@ -1,58 +1,92 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Chat + Tóm tắt tài liệu bằng AI
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Ứng dụng chat 2 người dùng trên Laravel: nhắn tin realtime, upload tệp lên Cloudflare R2, và tóm tắt nội dung tệp bằng DeepSeek AI.
 
-## About Laravel
+## Tính năng
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- **Chat realtime** giữa 2 user qua Laravel Reverb (websocket), có polling dự phòng khi mất kết nối.
+- **Upload tệp** (chọn được nhiều tệp một lần, tối đa 10 tệp / 20MB mỗi tệp) — lưu trên Cloudflare R2, tải về qua signed URL có hạn 5 phút.
+- **Tóm tắt AI** theo 2 phương án, chuyển bằng biến môi trường `SUMMARIZE_ON_UPLOAD`:
+  - `true` — **tự động khi upload**: tóm tắt xong, lưu DB rồi mới trả về (upload nhiều tệp thì tự chuyển qua queue).
+  - `false` (mặc định) — **bấm nút mới tóm tắt**: đẩy job vào queue, tải tệp từ R2 về thư mục tạm, gửi AI, lưu DB, phát kết quả realtime.
+- **Panel "📁 Tệp đã gửi"**: xem mọi tệp trong lịch sử chat, tick chọn nhiều tệp cũ để tóm tắt hàng loạt, bấm "✓ Xem tóm tắt" mở dialog nội dung.
+- Giao diện Blade thuần (không cần build frontend), tự theo dark mode của hệ điều hành.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Loại tệp tóm tắt được
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+| Loại | Cách trích text |
+|---|---|
+| `.pdf` | smalot/pdfparser |
+| `.docx` | ZipArchive đọc `word/document.xml` |
+| `.txt` `.md` `.csv` `.json` `.xml` `.html` `.log` | đọc trực tiếp |
 
-## Learning Laravel
+Tệp ngoài danh sách vẫn gửi/tải về bình thường, chỉ không tóm tắt được (DeepSeek không có vision).
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+## Kiến trúc AI — Adapter pattern
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+```
+app/Ai/
+├── AiProvider.php       # interface: summarize(string $text): string
+├── DeepSeekProvider.php # implementation gọi api.deepseek.com
+└── FileSummarizer.php   # tải tệp từ R2 → trích text → gọi provider → lưu DB
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Đổi provider AI: viết class mới implement `AiProvider`, thêm một nhánh `match` trong `AppServiceProvider::register()`, đổi `AI_PROVIDER` trong `.env`. Không phải sửa chỗ nào khác.
 
-## Contributing
+## Cài đặt
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Yêu cầu: PHP 8.3 (bật extension `zip`), Composer, SQLite.
 
-## Code of Conduct
+```bash
+composer install
+cp .env.example .env
+php artisan key:generate
+php artisan migrate --seed
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Điền vào `.env`:
 
-## Security Vulnerabilities
+```env
+# DeepSeek
+DEEPSEEK_API_KEY=sk-...
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+# Cloudflare R2 (tạo API token ở dashboard R2)
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_BUCKET=...
+R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 
-## License
+# Reverb (điền chuỗi ngẫu nhiên bất kỳ)
+REVERB_APP_ID=...
+REVERB_APP_KEY=...
+REVERB_APP_SECRET=...
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## Chạy
+
+```bash
+composer run dev
+```
+
+Một lệnh chạy đủ 3 process: web server (`:8000`), Reverb websocket (`:8080`), queue worker.
+
+Đăng nhập tại `http://localhost:8000` — 2 tài khoản seed sẵn (mở 2 trình duyệt để chat 2 phía):
+
+| Email | Mật khẩu |
+|---|---|
+| `user1@example.com` | `password` |
+| `user2@example.com` | `password` |
+
+## Test
+
+```bash
+php artisan test
+```
+
+Test fake sẵn R2 (`Storage::fake`) và DeepSeek (`Http::fake`) — chạy không cần credentials.
+
+## Ghi chú vận hành
+
+- Queue mặc định 1 worker chạy tuần tự — tóm tắt nhiều tệp sẽ nối đuôi nhau. Cần song song thì mở thêm terminal chạy `php artisan queue:work`.
+- Độ trễ tóm tắt chủ yếu là thời gian DeepSeek sinh kết quả (10–60s tùy độ dài tệp).
+- Text gửi AI bị cắt ở 100.000 ký tự đầu; tệp dài hơn cần chuyển sang tóm tắt theo chunk.

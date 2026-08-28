@@ -66,33 +66,73 @@ class ChatController extends Controller
     public function store(Request $request, FileSummarizer $summarizer): JsonResponse
     {
         $data = $request->validate([
-            'body' => ['required_without:file', 'nullable', 'string', 'max:5000'],
-            'file' => ['required_without:body', 'nullable', 'file', 'max:20480'],
+            'body' => ['required_without:files', 'nullable', 'string', 'max:5000'],
+            'files' => ['required_without:body', 'nullable', 'array', 'max:10'],
+            'files.*' => ['file', 'max:20480'],
         ]);
 
-        $message = new Message(['body' => $data['body'] ?? null]);
-        $message->user_id = $request->user()->id;
+        $files = $request->file('files') ?? [];
+        $messages = [];
 
-        if ($file = $request->file('file')) {
-            $message->file_path = $file->store('uploads', 'r2');
-            $message->file_name = $file->getClientOriginalName();
-            $message->file_mime = $file->getClientMimeType();
+        if ($body = $data['body'] ?? null) {
+            $messages[] = Message::create(['user_id' => $request->user()->id, 'body' => $body]);
         }
 
-        $message->save();
+        foreach ($files as $file) {
+            $message = Message::create([
+                'user_id' => $request->user()->id,
+                'file_path' => $file->store('uploads', 'r2'),
+                'file_name' => $file->getClientOriginalName(),
+                'file_mime' => $file->getClientMimeType(),
+            ]);
 
-        // Phương án 1: tóm tắt ngay khi upload, lưu DB rồi mới trả về (SUMMARIZE_ON_UPLOAD=true)
-        if ($message->file_path && config('services.ai.summarize_on_upload')) {
-            try {
-                $summarizer->summarize($message);
-            } catch (Throwable $e) {
-                report($e); // upload vẫn thành công, người dùng có thể bấm nút tóm tắt lại sau
+            // Phương án 1 (SUMMARIZE_ON_UPLOAD=true): 1 file thì tóm tắt sync lưu DB rồi mới trả về;
+            // nhiều file thì đẩy queue — không thể bắt 1 request đợi N lần gọi AI
+            if (config('services.ai.summarize_on_upload') && FileSummarizer::supports((string) $message->file_name)) {
+                if (count($files) === 1) {
+                    try {
+                        $summarizer->summarize($message);
+                    } catch (Throwable $e) {
+                        report($e); // upload vẫn thành công, người dùng có thể bấm nút tóm tắt lại sau
+                    }
+                } else {
+                    SummarizeFile::dispatch($message);
+                }
             }
+
+            $messages[] = $message;
         }
 
         broadcast(new ChatUpdated);
 
-        return response()->json($message->load('user:id,name'), 201);
+        return response()->json($messages, 201);
+    }
+
+    /**
+     * Tóm tắt hàng loạt các file cũ được chọn trong lịch sử chat — mỗi file một job.
+     */
+    public function summarizeBatch(Request $request): JsonResponse
+    {
+        $ids = $request->validate([
+            'ids' => ['required', 'array', 'max:20'],
+            'ids.*' => ['integer'],
+        ])['ids'];
+
+        $queued = 0;
+
+        $messages = Message::whereIn('id', $ids)
+            ->whereNotNull('file_path')
+            ->whereNull('summary')
+            ->get();
+
+        foreach ($messages as $message) {
+            if (FileSummarizer::supports((string) $message->file_name)) {
+                SummarizeFile::dispatch($message);
+                $queued++;
+            }
+        }
+
+        return response()->json(['queued' => $queued], 202);
     }
 
     /**
